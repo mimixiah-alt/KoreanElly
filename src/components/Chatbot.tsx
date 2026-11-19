@@ -46,9 +46,25 @@ export const Chatbot: React.FC = () => {
     setIsLoading(true);
 
     try {
-      // 프런트엔드에서는 /api/chat을 호출하고 실제 OpenAI API는 서버에서 호출
-      const reply = await sendChatMessage(updatedMessages);
-      setMessages([...updatedMessages, { role: 'assistant', content: reply }]);
+      // 프런트엔드에서는 /api/chat을 스트리밍 방식으로 호출
+      let isFirstChunk = true;
+
+      await sendChatMessage(updatedMessages, (chunk) => {
+        if (isFirstChunk) {
+          isFirstChunk = false;
+          setIsLoading(false); // 첫 청크가 도착하면 로딩 표시를 해제하고 답변 버블 표시
+          setMessages((prev) => [...prev, { role: 'assistant', content: chunk }]);
+        } else {
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (!last || last.role !== 'assistant') return prev;
+            return [
+              ...prev.slice(0, -1),
+              { ...last, content: last.content + chunk },
+            ];
+          });
+        }
+      });
     } catch (err: unknown) {
       console.error('Chat error:', err);
       const msg = err instanceof Error ? err.message : '알 수 없는 오류가 발생했습니다.';
@@ -180,4 +196,3 @@ export const Chatbot: React.FC = () => {
 };
 
 export default Chatbot;
-

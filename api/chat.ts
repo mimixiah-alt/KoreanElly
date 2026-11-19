@@ -26,7 +26,7 @@ interface ChatMessage {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // 응답 헬퍼 함수 (Vercel 및 로컬 개발 서버 호환)
+  // 응답 헬퍼 함수 (JSON 응답용)
   const sendJson = (statusCode: number, payload: Record<string, unknown>) => {
     if (typeof res.status === 'function' && typeof res.json === 'function') {
       return res.status(statusCode).json(payload);
@@ -74,45 +74,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       content: m.content,
     }));
 
-    // OpenAI Responses API 호출 (gpt-6-luna, reasoning.effort: 'none')
-    const response = await openai.responses.create({
+    // OpenAI Responses API 스트리밍 호출 (gpt-6-luna, reasoning.effort: 'none', stream: true)
+    const stream = await openai.responses.create({
       model: 'gpt-6-luna',
       reasoning: {
         effort: 'none',
       },
       instructions: SYSTEM_PROMPT,
       input: formattedInput,
+      stream: true,
     });
 
-    let textResponse = response.output_text ?? '';
+    // 스트리밍 응답 헤더 설정
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
 
-    // output_text가 비어있는 경우 output 리스트에서 fallback 추출
-    if (!textResponse && Array.isArray(response.output)) {
-      for (const item of response.output) {
-        if (item.type === 'message' && item.content) {
-          if (typeof item.content === 'string') {
-            textResponse += item.content;
-          } else if (Array.isArray(item.content)) {
-            for (const c of item.content) {
-              if ('text' in c && typeof c.text === 'string') {
-                textResponse += c.text;
-              }
-            }
-          }
-        }
+    // flushHeaders 지원 시 버퍼 비우기
+    if (typeof (res as unknown as { flushHeaders?: () => void }).flushHeaders === 'function') {
+      (res as unknown as { flushHeaders: () => void }).flushHeaders();
+    }
+
+    // 스트리밍 청크 순차 전송
+    for await (const event of stream) {
+      if (event.type === 'response.output_text.delta' && event.delta) {
+        res.write(event.delta);
       }
     }
 
-    return sendJson(200, {
-      message: textResponse.trim() || '답변을 생성하지 못했습니다. 다시 시도해 주세요.',
-    });
+    res.end();
   } catch (error: unknown) {
     console.error('Error in /api/chat handler:', error);
     const errorMessage =
       error instanceof Error ? error.message : '알 수 없는 서버 오류가 발생했습니다.';
-    return sendJson(500, {
-      error: `OpenAI API 호출 중 오류가 발생했습니다: ${errorMessage}`,
-    });
+
+    if (res.headersSent) {
+      res.write(`\n\n[오류 발생: ${errorMessage}]`);
+      res.end();
+    } else {
+      return sendJson(500, {
+        error: `OpenAI API 호출 중 오류가 발생했습니다: ${errorMessage}`,
+      });
+    }
   }
 }
-

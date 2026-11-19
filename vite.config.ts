@@ -59,13 +59,17 @@ function vercelApiDevPlugin(): Plugin {
           await handler(vercelReq, vercelRes)
         } catch (error: unknown) {
           console.error('[API Dev Server Error]:', error)
-          res.statusCode = 500
-          res.setHeader('Content-Type', 'application/json; charset=utf-8')
-          res.end(
-            JSON.stringify({
-              error: error instanceof Error ? error.message : 'Internal Server Error',
-            })
-          )
+          if (!res.headersSent) {
+            res.statusCode = 500
+            res.setHeader('Content-Type', 'application/json; charset=utf-8')
+            res.end(
+              JSON.stringify({
+                error: error instanceof Error ? error.message : 'Internal Server Error',
+              })
+            )
+          } else {
+            res.end()
+          }
         }
       })
     },
